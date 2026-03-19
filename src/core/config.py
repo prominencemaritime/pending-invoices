@@ -19,31 +19,31 @@ logger = logging.getLogger(__name__)
 class AlertConfig:
     """
     Configuration container for alert system.
-    
+
     All alerts share this common configuration, with the ability
     to override specific settings per alert type if needed.
     """
-    
+
     # Project structure
     project_root: Path
     queries_dir: Path
     logs_dir: Path
     data_dir: Path
     media_dir: Path
-    
+
     # Database connection handled by db_utils
     # (no config needed here)
-    
+
     # Email settings
     smtp_host: str
     smtp_port: int
     smtp_user: str
     smtp_pass: str
-    
+
     # Company-specific email routing
     email_routing: Dict[str, Dict[str, List[str]]]  # domain -> {to: [...], cc: [...]}
     internal_recipients: List[str]
-    
+
     # Feature flags
     enable_email_alerts: bool
     enable_teams_alerts: bool
@@ -54,8 +54,13 @@ class AlertConfig:
     company_logos: Dict[str, Path]  # company_name -> logo_path
 
     # Scheduling
-    schedule_frequency_hours: float
+    # If schedule_frequency_hours is set, interval mode is used.
+    # Otherwise time+day (cron) mode is used.
+    schedule_frequency_hours: Optional[float]   # None means time-based mode
     timezone: str
+    schedule_times: Optional[List[str]]         # e.g. ['09:00', '12:00']
+    schedule_days: Optional[List[int]]          # ISO weekdays: 1=Mon..7=Sun
+    schedule_times_timezone: str                # Timezone for schedule_times
 
     # Alert-specific configurations
     lookback_days: int
@@ -143,8 +148,11 @@ class AlertConfig:
             company_logos=company_logos,
 
             # Scheduling
-            schedule_frequency_hours=float(config('SCHEDULE_FREQUENCY_HOURS', default=1)),
+            schedule_frequency_hours=cls._parse_optional_float('SCHEDULE_FREQUENCY_HOURS'),
             timezone=config('TIMEZONE', default='Europe/Athens'),
+            schedule_times=cls._parse_csv_list('SCHEDULE_TIMES'),
+            schedule_days=cls._parse_int_csv_list('SCHEDULE_DAYS'),
+            schedule_times_timezone=config('SCHEDULE_TIMES_TIMEZONE', default='Europe/Athens'),
 
             # Tracking - if None or empty, never resend (track "forever")
             reminder_frequency_days=config('REMINDER_FREQUENCY_DAYS', default=None, cast=lambda x: float(x) if x and x.strip() else None),
@@ -157,8 +165,6 @@ class AlertConfig:
 
             # URLs
             base_url=config('BASE_URL', default='https://prominence.orca.tools/'),
-
-            # Documents links config
             enable_links=config('ENABLE_LINKS', default='False', cast=bool),
             url_path=config('URL_PATH', default='/events'),
 
@@ -169,6 +175,32 @@ class AlertConfig:
             # Dry-run settings (don't set dry_run here, it's set by CLI flag in main.py)
             dry_run_email=config('DRY_RUN_EMAIL', default='').strip(),
         )
+
+    # ------------------------------------------------------------------
+    # Parsing helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_optional_float(env_var: str) -> Optional[float]:
+        """Return float if env var is set and non-empty, else None."""
+        raw = config(env_var, default='').strip()
+        return float(raw) if raw else None
+
+    @staticmethod
+    def _parse_csv_list(env_var: str) -> Optional[List[str]]:
+        """Parse comma-separated string list. Returns None if env var is empty."""
+        raw = config(env_var, default='').strip()
+        if not raw:
+            return None
+        return [s.strip() for s in raw.split(',') if s.strip()]
+
+    @staticmethod
+    def _parse_int_csv_list(env_var: str) -> Optional[List[int]]:
+        """Parse comma-separated int list. Returns None if env var is empty."""
+        raw = config(env_var, default='').strip()
+        if not raw:
+            return None
+        return [int(s.strip()) for s in raw.split(',') if s.strip()]
 
     @staticmethod
     def _parse_email_list(env_var: str) -> List[str]:
@@ -205,10 +237,10 @@ class AlertConfig:
 
     def validate(self) -> None:
         """
-        Validate that all required configuration is present.
+        Validate that all required configuration is present and consistent.
 
         Raises:
-            ValueError: If required configuration is missing
+            ValueError: If required configuration is missing or inconsistent.
         """
         required = {
             'SMTP_HOST': self.smtp_host,
@@ -217,10 +249,15 @@ class AlertConfig:
         }
 
         missing = [key for key, value in required.items() if not value]
-
         if missing:
             raise ValueError(
                 f"Required configuration missing from .env: {', '.join(missing)}"
+            )
+
+        # Validate scheduling configuration
+        if not self.schedule_frequency_hours and not self.schedule_times:
+            raise ValueError(
+                "Either SCHEDULE_FREQUENCY_HOURS or SCHEDULE_TIMES must be set."
             )
 
         logger.info("[OK] Configuration validation passed")
