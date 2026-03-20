@@ -5,7 +5,7 @@ services:
       args:
         UID: ${UID}
         GID: ${GID}
-    container_name: passage-plan-app
+    container_name: pending-invoices-alerts-app
     env_file:
       - .env
     volumes:

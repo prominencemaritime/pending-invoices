@@ -1,4 +1,4 @@
-# src/utils/get_emails.py
+# src/utils/get_department_emails.py
 
 from src.db_utils import validate_query_file, query_to_df
 from pathlib import Path

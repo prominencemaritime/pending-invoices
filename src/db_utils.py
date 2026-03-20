@@ -107,14 +107,14 @@ def query_to_df(query: str, display_all: bool=True, local: bool=False, params: d
 
     Examples
     --------
-    >>> # Query remote database with SSH tunnel
-    >>> df = query_to_df("SELECT * FROM users LIMIT 10")
-    >>> 
-    >>> # Query local DuckDB database
-    >>> df = query_to_df("SELECT * FROM 'data.parquet'", local=True)
-    >>>
-    >>> # Query without full display
-    >>> df = query_to_df("SELECT * FROM users", display_all=False)
+    >> # Query remote database with SSH tunnel
+    >> df = query_to_df("SELECT * FROM users LIMIT 10")
+    >> 
+    >> # Query local DuckDB database
+    >> df = query_to_df("SELECT * FROM 'data.parquet'", local=True)
+    >>
+    >> # Query without full display
+    >> df = query_to_df("SELECT * FROM users", display_all=False)
 
     Notes
     -----

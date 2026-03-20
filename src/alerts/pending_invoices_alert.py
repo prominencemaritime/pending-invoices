@@ -1,5 +1,5 @@
-#src/alerts/passage_plan.py
-"""Passage Plan Alert Implementation.""" 
+#src/alerts/pending_invoices_alert.py
+"""Pending Invoices Alert Implementation.""" 
 from typing import Dict, List, Optional
 import pandas as pd 
 from datetime import datetime, timedelta 
@@ -9,18 +9,18 @@ import logging
  
 from src.core.base_alert import BaseAlert 
 from src.core.config import AlertConfig 
-from src.db_utils import get_db_connection, validate_query_file 
+from src.db_utils import get_db_connection, validate_query_file, query_to_df
 
 
 logger = logging.getLogger(__name__)
 
 
-class PassagePlanAlert(BaseAlert):
-    """Alert for Passage Plan events"""
+class PendingInvoicesAlert(BaseAlert):
+    """Alert for pending invoices"""
 
     def __init__(self, config: AlertConfig):
         """
-        Initialise passage plan alert
+        Initialise pending invoices alert
         
         Args:
             config: AlertConfig instance
@@ -28,35 +28,53 @@ class PassagePlanAlert(BaseAlert):
         super().__init__(config)
 
         # Load query + lookback
-        self.sql_query_file = 'PassagePlan.sql'
-        self.lookback_days = config.lookback_days
+        self.sql_main_query_file = 'PendingInvoices.sql'
+        self.sql_department_email_query_file = 'DepartmentEmails.sql'
 
         # Log instantiation
-        self.logger.info(f"[OK] PassagePlanAlert instance created")
+        self.logger.info("[OK] PendingInvoicesAlert instance created")
 
         
     def fetch_data(self) -> pd.DataFrame:
         """
-        Fetch passage plans from database
+        Fetch pending invoices from database
 
         Returns:
-            DataFrame with columns: event_type_id, event_type_name, 
-            vsl_email, vessel_id, vessel_name, event_id, event_name, 
-            created_at, synced_at, status, status_id
+            DataFrame with columns: 
+                vessel,
+                department,
+                vendor,
+                invoice_no,
+                invoice_date,
+                invoice_due_date,
+                amount_usd,
+                day_count
         """
-        # Load SQL query
-        query_path = self.config.queries_dir / self.sql_query_file
-        query_sql = validate_query_file(query_path)
+        # Fetch SQL queries
+        main_query_path = self.config.queries_dir / self.sql_main_query_file
+        emails_query_path = self.config.queries_dir / self.sql_department_email_query_file
+        main_query_sql = validate_query_file(main_query_path)
+        emails_query_sql = validate_query_file(emails_query_path)
 
-        # Bind params to the query
-        params = {"lookback_days": self.lookback_days}
-        query = text(query_sql)
+        # Convert query to sqlalchemy format
+        main_query = text(main_query_sql)
+        email_query = text(emails_query_sql)
 
-        # Execute Query
+        # Connect to db and execute queries
         with get_db_connection() as conn:
-            df = pd.read_sql_query(query, conn, params=params)
+            df = pd.read_sql_query(main_query, conn)#, params=params)
+            emails_df = pd.read_sql_query(email_query, conn)
 
-        self.logger.info(f"PassageAlertAlert.fetch_data() is returning a df with {len(df)} rows")
+        # Merge emails (extracted from departments) into df
+        df['_dept_key'] = df['department'].str.lower()
+        emails_df['_dept_key'] = emails_df['department'].str.lower()
+        df = df.merge(
+            emails_df[['_dept_key', 'primary_email', 'secondary_email']],
+            on='_dept_key',
+            how='left'
+        ).drop(columns='_dept_key')
+        
+        self.logger.info(f"PendingInvoicesAlert.fetch_data() is returning a df with {len(df)} rows")
         return df
 
 
@@ -65,6 +83,15 @@ class PassagePlanAlert(BaseAlert):
     
         Args:
             df: Raw pd.DataFrame from database
+                cols:
+                    vessel,
+                    department,
+                    vendor,
+                    invoice_no,
+                    invoice_date,
+                    invoice_due_date,
+                    amount_usd,
+                    day_count
 
         Returns:
             Filtered pd.DataFrame with only recently udpated entries
@@ -75,49 +102,49 @@ class PassagePlanAlert(BaseAlert):
             return df
 
         # Timezone awareness
-        df['synced_at'] = pd.to_datetime(df['synced_at'])
+        df['invoice_date'] = pd.to_datetime(df['invoice_date'])
+        df['invoice_due_date'] = pd.to_datetime(df['invoice_due_date'])
 
-        # If the datetime is timezone-naive, localise it to UTC first, then convert to timezone specified in .env 
-        # It seems that the events timezones are probably UTC, but haven't proven this. I am assuming all times appearing are UTC, and then converting to TIMEZONE='Europe/Athens' will automatically be correct during Winter (UTC+2) and Summer (UTC+3).
-        if df['synced_at'].dt.tz is None:
-            df['synced_at'] = df['synced_at'].dt.tz_localize('UTC').dt.tz_convert(self.config.timezone)
+        # If the datetime is timezone-naive, localise it to UTC first, then convert to timezone specified in .env. I am assuming all times appearing are UTC, and then converting to TIMEZONE='Europe/Athens' will automatically be correct during Winter (UTC+2) and Summer (UTC+3).
+
+        if df['invoice_date'].dt.tz is None:
+            df['invoice_date'] = df['invoice_date'].dt.tz_localize('UTC').dt.tz_convert(self.config.timezone)
         else:
             # If already timezone-aware, convert to timezone specified in .env
-            df['synced_at'] = df['synced_at'].dt.tz_convert(self.config.timezone)
+            df['invoice_date'] = df['invoice_date'].dt.tz_convert(self.config.timezone)
 
-        # Calculate cutoff date (timezone-aware)
-        cutoff_date = datetime.now(tz=ZoneInfo(self.config.timezone)) - timedelta(days=self.lookback_days)
+        # repeat for due date
+        if df['invoice_due_date'].dt.tz is None:
+            df['invoice_due_date'] = df['invoice_due_date'].dt.tz_localize('UTC').dt.tz_convert(self.config.timezone)
+        else:
+            # If already timezone-aware, convert to timezone specified in .env
+            df['invoice_due_date'] = df['invoice_due_date'].dt.tz_convert(self.config.timezone)
 
-        # Filter for recent sync (timezone-aware) corresponding to config.lookback_days
-        df_filtered = df[df['synced_at'] >= cutoff_date].copy()
+        # Filter for invoices due in less than 31 days
+        df_filtered = df[df['day_count'] <= 30].copy()
 
-        # Format dates for display
-        df_filtered['synced_at'] = df_filtered['synced_at'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        # Include a priority column: RED & ORANGE definition
+        df_filtered['priority'] = None
+        df_filtered.loc[df_filtered['day_count'] <= 0, 'priority'] = 'red'
+        df_filtered.loc[(df_filtered['day_count'] > 0) & (df_filtered['day_count'] <= 30), 'priority'] = 'orange'
 
-        # Format created_at date
-        if 'created_at' in df_filtered.columns:
-            # errors='coerce' -> replace date/times that cannot be parsed by NaT
-            df_filtered['created_at'] = pd.to_datetime(df_filtered['created_at'], errors='coerce').dt.strftime('%Y-%m-%d')
-            # replace NaT by ''
-            df_filtered['created_at'] = df_filtered['created_at'].fillna('')
-
-        self.logger.info(f"Filtered to {len(df_filtered)} entr{'y' if len(df_filtered)==1 else 'ies'} synced with LOOKBACK={self.lookback_days} day{'' if len(df_filtered)==1 else 's'}")
-
+        self.logger.info(f"Filtered to {len(df_filtered)} entr{'y' if len(df_filtered)==1 else 'ies'}")
         return df_filtered
 
 
-    def _get_url_links(self, link_id: int) -> Optional[str]:
+    def _get_url_links(self, invoice_no: int) -> Optional[str]:
         """
         Generate URL if links are enabled.
 
         Constructs URL by combining:
             - BASE_URL from config (e.g. https://prominence.orca.tools)
-            - URL_PATH from config (e.g. /events)
-            - link_id from database (e.g. 123)
-        Result: https://prominence.orca.tools/events/123
+            - URL_PATH from config (e.g. /invoices)
+            - invoice_no from database (e.g. 123)
+        Result: https://prominence.orca.tools/invoices/123
 
         Args:
-            link_id: in PassagePlan project, given by event.id = event_id
+            invoice_no: in PendingInvoices project, given by
+                public_reporting.fct_invoicing__per_ref_code.invoice_no = invoice_no
 
         Returns:
             Complete URL, or None if links are disabled
@@ -128,7 +155,7 @@ class PassagePlanAlert(BaseAlert):
         # Build URL: BASE_URL + URL_PATH + link_id
         base_url = self.config.base_url.rstrip('/')
         url_path = self.config.url_path.rstrip('/')
-        full_url = f"{base_url}{url_path}/{link_id}"
+        full_url = f"{base_url}{url_path}/{invoice_no}"
 
         return full_url
 
@@ -152,7 +179,7 @@ class PassagePlanAlert(BaseAlert):
         jobs = []
 
         # Group by vessel
-        grouped = df.groupby(['vessel_name', 'vsl_email'])
+        grouped = df.groupby(['department', 'vsl_email'])
 
         for (vessel_name, vessel_email), vessel_df in grouped:
             # Determine cc recipients
@@ -171,12 +198,15 @@ class PassagePlanAlert(BaseAlert):
 
             # Specify WHICH cols to display in email and in what order here
             display_columns = [
-                    'event_id',
-                    'event_name',
-                    'created_at',
-                    'synced_at',
-                    'status'
+                    'vessel',
+                    'department',
+                    'vendor',
+                    'invoice_no',
+                    'invoice_date',
+                    'invoice_due_date',
+                    'amount_usd'
             ]
+
 
             # Create notification job
             job = {
@@ -292,7 +322,26 @@ class PassagePlanAlert(BaseAlert):
             Email subject string
         """
         vessel_name = metadata.get('vessel_name', 'Vessel')
-        return f"AlertDev | {vessel_name.upper()} Passage Plan"
+        return f"AlertDev | {data['department']}  | {len(data)} Pending Invoices"
+
+
+    def get_required_columns(self) -> List[str]:
+        """
+        Return list of column names required in the DataFrame
+
+        Returns:
+            List of required column names
+        """
+        return [
+            'vessel',
+            'department',
+            'vendor',
+            'invoice_no',
+            'invoice_date',
+            'invoice_due_date',
+            'amount_usd',
+            'day_count'
+        ]
 
 
     def get_required_columns(self) -> List[str]:
@@ -320,5 +369,4 @@ df_filtered.columns:
     event_type_id, event_type_name, vessel_name, status_id,     <- extra stuff
     event_id, event_name, created_at, synced_at, status     <- display stuff
 """
-
 
