@@ -70,7 +70,7 @@ def validate_query_file(query_path: Path) -> str:
        return f.read()
 
 
-def query_to_df(query: str, display_all: bool=True, local: bool=False) -> pd.DataFrame:
+def query_to_df(query: str, display_all: bool=True, local: bool=False, params: dict | None=None) -> pd.DataFrame:
     """
     Execute SQL query and return results as a pandas DataFrame.
 
@@ -88,6 +88,8 @@ def query_to_df(query: str, display_all: bool=True, local: bool=False) -> pd.Dat
     local : bool, optional
         If True, executes the query using DuckDB locally instead of connecting
         to the remote PostgreSQL database. Default is False.
+    params : dict
+        
 
     Returns
     -------
@@ -149,14 +151,14 @@ def query_to_df(query: str, display_all: bool=True, local: bool=False) -> pd.Dat
                     f"localhost:{tunnel.local_bind_port}/{DB_NAME}"
             )
             engine = create_engine(connection_string)
-            return pd.read_sql(query, engine)
+            return pd.read_sql(text(query), engine, params=params)
     else:
         connection_string = (
                 f"postgresql://{DB_USER}:{DB_PASS}@"
                 f"{DB_HOST}:{DB_PORT}/{DB_NAME}"
         )
         engine = create_engine(connection_string)
-        return pd.read_sql(query, engine)
+        return pd.read_sql(text(query), engine, params=params)
 
 @contextmanager
 def get_db_connection():
