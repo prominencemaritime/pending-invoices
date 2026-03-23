@@ -37,18 +37,39 @@ class PendingInvoicesAlert(BaseAlert):
         
     def fetch_data(self) -> pd.DataFrame:
         """
-        Fetch pending invoices from database
+        Fetch pending invoices and enrich with department-level email data.
+
+        This method executes two SQL queries:
+            1. Main query: retrieves pending invoice records
+            2. Email query: retrieves department → (primary, secondary) email mappings
+
+        The two datasets are merged via a case-insensitive join on department.
 
         Returns:
-            DataFrame with columns: 
-                vessel,
-                department,
-                vendor,
-                invoice_no,
-                invoice_date,
-                invoice_due_date,
-                amount_usd,
-                day_count
+            pd.DataFrame with columns:
+
+            Core invoice data:
+                - ref: str
+                - vessel: str
+                - department: str
+                - vendor: str
+                - invoice_no: int
+                - invoice_date: datetime (timezone-naive or aware, depending on DB)
+                - invoice_due_date: datetime
+                - amount_usd: float
+                - day_count: int
+                - primary_email: Optional[str]
+                - secondary_email: Optional[str]
+
+        Notes:
+            - The join is a LEFT JOIN on department (case-insensitive), so all invoice
+              rows are preserved even if no email mapping exists.
+            - Email fields are not yet used for routing at this stage; they are passed
+              downstream for use in `route_notifications()`.
+            - No filtering is applied here; all filtering is handled in `filter_data()`.
+
+        Logging:
+            Logs the number of rows returned after merging.
         """
         # Fetch SQL queries
         main_query_path = self.config.queries_dir / self.sql_main_query_file
@@ -92,6 +113,8 @@ class PendingInvoicesAlert(BaseAlert):
                     invoice_due_date,
                     amount_usd,
                     day_count
+                    primary_email: Optional[str]
+                    secondary_email: Optional[str]
 
         Returns:
             Filtered pd.DataFrame with only recently udpated entries
@@ -125,26 +148,29 @@ class PendingInvoicesAlert(BaseAlert):
 
         # Include a priority column: RED & ORANGE definition
         df_filtered['priority'] = None
-        df_filtered.loc[df_filtered['day_count'] <= 0, 'priority'] = 'red'
-        df_filtered.loc[(df_filtered['day_count'] > 0) & (df_filtered['day_count'] <= 30), 'priority'] = 'orange'
+        df_filtered.loc[df_filtered['day_count'] <= 0, 'priority'] = 'OVERDUE'
+        df_filtered.loc[(df_filtered['day_count'] > 0) & (df_filtered['day_count'] <= 30), 'priority'] = 'SOON DUE'
 
         self.logger.info(f"Filtered to {len(df_filtered)} entr{'y' if len(df_filtered)==1 else 'ies'}")
+
+        df_filtered['invoice_date'] = df_filtered['invoice_date'].dt.strftime('%Y-%m-%d')
+        df_filtered['invoice_due_date'] = df_filtered['invoice_due_date'].dt.strftime('%Y-%m-%d')
         return df_filtered
 
 
-    def _get_url_links(self, invoice_no: int) -> Optional[str]:
+    def _get_url_links(self, ref: str) -> Optional[str]:
         """
         Generate URL if links are enabled.
 
         Constructs URL by combining:
             - BASE_URL from config (e.g. https://prominence.orca.tools)
             - URL_PATH from config (e.g. /invoices)
-            - invoice_no from database (e.g. 123)
+            - ref=invoice_ref_code from database (e.g. 123)
         Result: https://prominence.orca.tools/invoices/123
 
         Args:
-            invoice_no: in PendingInvoices project, given by
-                public_reporting.fct_invoicing__per_ref_code.invoice_no = invoice_no
+            ref: in PendingInvoices project, given by
+                public_reporting.fct_invoicing__per_ref_code.invoice_ref_code = ref
 
         Returns:
             Complete URL, or None if links are disabled
@@ -152,10 +178,13 @@ class PendingInvoicesAlert(BaseAlert):
         if not self.config.enable_links:
             return None
 
+        # extract the url ref, e.g. 1504-2026 -> 1504
+        ref = ref.split('-')[0]
+
         # Build URL: BASE_URL + URL_PATH + link_id
         base_url = self.config.base_url.rstrip('/')
         url_path = self.config.url_path.rstrip('/')
-        full_url = f"{base_url}{url_path}/{invoice_no}"
+        full_url = f"{base_url}{url_path}/{ref}"
 
         return full_url
 
@@ -172,6 +201,18 @@ class PendingInvoicesAlert(BaseAlert):
 
         Args:
             df: Filtered DataFrame
+                Expected column names:
+                    ref,
+                    vessel,
+                    department,
+                    vendor,
+                    invoice_no,
+                    invoice_date,
+                    invoice_due_date,
+                    amount_usd,
+                    day_count
+                    primary_email: Optional[str]
+                    secondary_email: Optional[str]
 
         Returns:
             List of notification job dictionaries
@@ -179,25 +220,37 @@ class PendingInvoicesAlert(BaseAlert):
         jobs = []
 
         # Group by vessel
-        grouped = df.groupby(['department', 'vsl_email'])
+        grouped = df.groupby('department', dropna=False)
 
-        for (vessel_name, vessel_email), vessel_df in grouped:
+        for department_name, dept_df in grouped:
             # Determine cc recipients
-            cc_recipients = self._get_cc_recipients(vessel_email)
+            primary_email = dept_df['primary_email'].iloc[0]
+            secondary_email = dept_df['secondary_email'].iloc[0] if 'secondary_email' in dept_df.columns else None
 
-            # Add URLs to dataframe if ENABLE_LINKS
-            if self.config.enable_links:
-                vessel_df = vessel_df.copy()
-                vessel_df['url'] = vessel_df['event_id'].apply(
-                        self._get_url_links
-                )
+            # Skip departments with no email configured
+            if pd.isna(primary_email) or not primary_email:
+                self.logger.warning(f"No primary email for department '{department_name}', skipping")
+                continue
+
+            # Build to recipients: primary + secondary (if present)
+            to_recipients = [primary_email]
+            if secondary_email and not pd.isna(secondary_email):
+                to_recipients.append(secondary_email)
+
+            # CC recipients: fixed internal list from config
+            cc_recipients = self.config.internal_recipients.copy()
+
+            # URL
+            dept_df = dept_df.copy()
+            dept_df['url'] = dept_df['ref'].apply(self._get_url_links)
 
             # Keep full data with tracking columns for the job
             # The formatter will handle which columns to display
-            full_data = vessel_df.copy()
+            full_data = dept_df.copy()
 
             # Specify WHICH cols to display in email and in what order here
             display_columns = [
+                    'priority',
                     'vessel',
                     'department',
                     'vendor',
@@ -210,13 +263,13 @@ class PendingInvoicesAlert(BaseAlert):
 
             # Create notification job
             job = {
-                    'recipients': [vessel_email],
+                    'recipients': to_recipients,
                     'cc_recipients': cc_recipients,
                     'data': full_data,
                     'metadata': {
-                        'vessel_name': vessel_name,
-                        'alert_title': 'Passage Plan',
-                        'company_name': self._get_company_name(vessel_email),
+                        'alert_title': 'Pending Invoices',
+                        'department_name': department_name,
+                        'company_name': 'Prominence Maritime S.A.',
                         'display_columns': display_columns
                     }
             }
@@ -224,65 +277,12 @@ class PendingInvoicesAlert(BaseAlert):
             jobs.append(job)
 
             self.logger.info(
-                    f"Created notification for vessel '{vessel_name}' "
-                    f"({len(full_data)} document{'' if len(full_data)==1 else 's'}) -> {vessel_email} "
+                    f"Created notification for department '{department_name}' "
+                    f"({len(full_data)} invoice{'' if len(full_data)==1 else 's'}) -> {to_recipients} "
                     f"(CC: {len(cc_recipients)})"
             )
 
         return jobs
-
-
-    def _get_cc_recipients(self, vessel_email: str) -> List[str]:
-        """
-        Determine CC recipients based on vessel email domain.
-        Always includes internal recipients.
-
-        Args:
-            vessel_email: Vessel's email address
-
-        Returns:
-            List of CC email addresses (domain-specific + internal)
-        """
-        vessel_email_lower = vessel_email.lower()
-
-        # Start with empty list
-        cc_list = []
-
-        # Check each configured domain
-        entry = 0
-        total_entries = len(self.config.email_routing.items())
-        for domain, recipients_config in self.config.email_routing.items():
-            entry += 1
-            if domain.lower() in vessel_email_lower:
-                cc_list = recipients_config.get('cc', [])
-                break
-            else:
-                self.logger.info(f"Entry {entry}/{total_entries}: No domain match for vessel_email={vessel_email} (only including internal CC recipients)")
-
-        # Always add internal recipients to CC list
-        all_cc_recipients = list(set(cc_list + self.config.internal_recipients))
-
-        return all_cc_recipients
-
-
-    def _get_company_name(self, vessel_email: str) -> str:
-        """
-        Determine company name based on vessel email domain.
-        
-        Args:
-            vessel_email: Vessel's email address
-            
-        Returns:
-            Company name string
-        """
-        vessel_email_lower = vessel_email.lower()
-        
-        if 'prominence' in vessel_email_lower:
-            return 'Prominence Maritime S.A.'
-        elif 'seatraders' in vessel_email_lower:
-            return 'Sea Traders S.A.'
-        else:
-            return 'Prominence Maritime S.A.'   # Default company name
 
 
     def get_tracking_key(self, row:pd.Series) -> str:
@@ -298,12 +298,9 @@ class PendingInvoicesAlert(BaseAlert):
             Unique string key (e.g., "vessel_123_doc_456")
         """
         try:
-            vessel_id = row['vessel_id']
-            event_type_id = row['event_type_id']
-            event_id = row['event_id']
-
-            return f"vessel_id_{vessel_id}__event_type_{event_type_id}__event_id_{event_id}"
-
+            department = row['department']
+            invoice_no = row['invoice_no']
+            return f"department__{department}__invoice_no__{invoice_no}"
         except KeyError as e:
             self.logger.error(f"Missing column in row for tracking key: {e}")
             self.logger.error(f"Available columns: {list(row.index)}")
@@ -321,8 +318,8 @@ class PendingInvoicesAlert(BaseAlert):
         Returns:
             Email subject string
         """
-        vessel_name = metadata.get('vessel_name', 'Vessel')
-        return f"AlertDev | {data['department']}  | {len(data)} Pending Invoices"
+        department_name = metadata.get('department_name', 'Department')
+        return f"AlertDev | {department_name} | {len(data)} Pending Invoice{'s' if len(data) != 1 else ''}"
 
 
     def get_required_columns(self) -> List[str]:
@@ -333,6 +330,7 @@ class PendingInvoicesAlert(BaseAlert):
             List of required column names
         """
         return [
+            'ref',
             'vessel',
             'department',
             'vendor',
@@ -342,31 +340,3 @@ class PendingInvoicesAlert(BaseAlert):
             'amount_usd',
             'day_count'
         ]
-
-
-    def get_required_columns(self) -> List[str]:
-        """
-        Return list of column names required in the DataFrame.
-
-        Returns:
-            List of required column names
-        """
-        return [
-            'vsl_email',
-            'vessel_id',
-            'event_type_id',
-            'event_id',
-            'event_name',
-            'created_at',
-            'synced_at',
-            'status'
-        ]
-
-
-"""
-df_filtered.columns:
-    vsl_email, vessel_id,   <- groupby
-    event_type_id, event_type_name, vessel_name, status_id,     <- extra stuff
-    event_id, event_name, created_at, synced_at, status     <- display stuff
-"""
-

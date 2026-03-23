@@ -20,7 +20,7 @@ from src.notifications.email_sender import EmailSender
 from src.notifications.teams_sender import TeamsSender
 from src.formatters.html_formatter import HTMLFormatter
 from src.formatters.text_formatter import TextFormatter
-from src.alerts.passage_plan_alert import PassagePlanAlert
+from src.alerts.pending_invoices_alert import PendingInvoicesAlert
 
 
 def setup_logging(config: AlertConfig) -> logging.Logger:
@@ -111,9 +111,9 @@ def register_alerts(scheduler: AlertScheduler, config: AlertConfig) -> None:
     """
     logger = logging.getLogger(__name__)
 
-    passage_plan_alert = PassagePlanAlert(config)
-    scheduler.register_alert(passage_plan_alert.run)
-    logger.info("[OK] Registered PassagePlanAlert")
+    pending_invoices_alert = PendingInvoicesAlert(config)
+    scheduler.register_alert(pending_invoices_alert.run)
+    logger.info("[OK] Registered PendingInvoicesAlert")
 
     # Future alerts can be registered here:
     # hot_works_alert = HotWorksAlert(config)

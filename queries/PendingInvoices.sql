@@ -1,4 +1,5 @@
 SELECT
+    invoice_ref_code as ref,
 	invoice_vessel_company as vessel,
 	invoice_department_name as department,
 	RTRIM(invoice_vendor_name, ' *') as vendor,

@@ -1,5 +1,5 @@
 #src/alerts/__init__.py
 """Alert implementations."""
-from .passage_plan_alert import PassagePlanAlert
+from .pending_invoices_alert import PendingInvoicesAlert
 
-__all__ = ['PassagePlanAlert']
+__all__ = ['PendingInvoicesAlert']

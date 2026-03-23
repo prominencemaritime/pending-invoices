@@ -57,13 +57,13 @@ class AlertConfig:
     # If schedule_frequency_hours is set, interval mode is used.
     # Otherwise time+day (cron) mode is used.
     schedule_frequency_hours: Optional[float]   # None means time-based mode
-    timezone: str
     schedule_times: Optional[List[str]]         # e.g. ['09:00', '12:00']
     schedule_days: Optional[List[int]]          # ISO weekdays: 1=Mon..7=Sun
     schedule_times_timezone: str                # Timezone for schedule_times
+    timezone: str
 
     # Alert-specific configurations
-    lookback_days: int
+    lookback_days: Optional[int]
     include_grey_metadata_section: bool
 
     # Tracking
@@ -76,8 +76,8 @@ class AlertConfig:
     log_backup_count: int
 
     # URLs
-    base_url: str
     enable_links: bool
+    base_url: str
     url_path: str
 
     # Runtime objects (injected after initialization)
@@ -205,7 +205,8 @@ class AlertConfig:
     @staticmethod
     def _parse_email_list(env_var: str) -> List[str]:
         """Parse comma-separated email list from environment variable."""
-        return [s.strip() for s in config(env_var, default='').split(',') if s.strip()]
+        raw = config(env_var, default='')
+        return [s.strip() for s in raw.split(',') if s.strip()]
 
     @staticmethod
     def _load_email_routing() -> Dict[str, Dict[str, List[str]]]:

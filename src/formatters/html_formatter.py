@@ -38,16 +38,22 @@ class HTMLFormatter:
         else:
             display_value = str(value)
 
-        # Make event_name clickable if links are enabled
-        if column_name == 'event_name' and enable_links:
-            # Check if url exists in row and has a value
+        # Render priority column as a styled badge
+        if column_name == 'priority':
+            if display_value == 'OVERDUE':
+                return '<span class="badge badge-overdue">Overdue</span>'
+            elif display_value == 'SOON DUE':
+                return '<span class="badge badge-soon-due">Soon Due</span>'
+            return display_value
+
+        # Make invoice_no clickable if links are enabled
+        if column_name == 'invoice_no' and enable_links:
             if 'url' in row.index and pd.notna(row['url']):
                 url = row['url']
                 return f'<a href="{url}" style="color: #0066cc; text-decoration: none;">{display_value}</a>'
 
         # Regular cell - no link
         return display_value
-
 
     def format(self, df: pd.DataFrame, run_time: datetime, config: 'AlertConfig', metadata: Optional[Dict] = None, enable_links: bool = False) -> str:
         """
@@ -215,6 +221,25 @@ class HTMLFormatter:
         border-top: 1px solid #eee;
         background-color: #f9fafc;
     }}
+    .badge {{
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+    }}
+    .badge-overdue {{
+        background-color: #fde8e8;
+        color: #c0392b;
+        border: 1px solid #e74c3c;
+    }}
+    .badge-soon-due {{
+        background-color: #fff3e0;
+        color: #e65100;
+        border: 1px solid #fb8c00;
+    }}
     .no-data {{
         text-align: center;
         padding: 40px;
@@ -338,7 +363,6 @@ class HTMLFormatter:
                 # Specify grey metadata entries to be included here:
                 grey_metadata_entries = {
                         "Report Generated": run_time.strftime('%A, %B %d, %Y at %H:%M %Z'), 
-                        "Lookback": f'{duration_hours(config.lookback_days*24)} (to synced at)' if getattr(config, "lookback_days", None) else None,
                         "Schedule Frequency": duration_hours(config.schedule_frequency_hours) if getattr(config, "schedule_frequency_hours", None) else None, 
                         "Records Found": f'<span class="count-badge">{len(df)}</span>'
                 }

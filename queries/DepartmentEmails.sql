@@ -9,4 +9,3 @@ LEFT JOIN
     ON dse.department_id = d.id
 WHERE 
     d.email IS NOT NULL
-    --AND LOWER(d.name) = LOWER(:department_name)

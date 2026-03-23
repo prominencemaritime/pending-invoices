@@ -48,6 +48,13 @@ def get_emails(department_name: str) -> DepartmentEmails:
         secondary=str(row['secondary_email']) if pd.notna(row['secondary_email']) else None
     )
 
+def get_email_list(department_name: str) -> List[str]:
+    """
+    Convert to the list format to override 'to' field in dict _load_email_routing() in src/core/config.py
+    """
+    result = get_emails(department)
+    return [x for x in (result.primary, result.secondary) if x is not None]
+
 
 if __name__ == "__main__":
 
