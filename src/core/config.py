@@ -171,7 +171,7 @@ class AlertConfig:
             url_path=config('URL_PATH', default='/events'),
 
             # Alert-specific configurations
-            lookback_days=int(config('LOOKBACK_DAYS', default=1)),
+            lookback_days=int(config('LOOKBACK_DAYS', default=1)) if config('LOOKBACK_DAYS', default='').strip() else None,
             include_grey_metadata_section=config('INCLUDE_GREY_METADATA_SECTION', default=False, cast=bool),
 
             # Dry-run settings (don't set dry_run here, it's set by CLI flag in main.py)
