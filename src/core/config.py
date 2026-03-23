@@ -87,7 +87,7 @@ class AlertConfig:
     html_formatter: Optional['HTMLFormatter'] = None
     text_formatter: Optional['TextFormatter'] = None
     dry_run: bool = False
-    dry_run_email: str = ''  # Redirect all emails here in dry-run mode
+    dry_run_email: List[str] = field(default_factory=list) # Redirect all emails here in dry-run mode
 
     @classmethod
     def from_env(cls, project_root: Optional[Path] = None) -> 'AlertConfig':
@@ -175,7 +175,7 @@ class AlertConfig:
             include_grey_metadata_section=config('INCLUDE_GREY_METADATA_SECTION', default=False, cast=bool),
 
             # Dry-run settings (don't set dry_run here, it's set by CLI flag in main.py)
-            dry_run_email=config('DRY_RUN_EMAIL', default='').strip(),
+            dry_run_email=cls._parse_email_list('DRY_RUN_EMAIL'),
         )
 
     # ------------------------------------------------------------------

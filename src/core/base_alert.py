@@ -249,13 +249,13 @@ class BaseAlert(ABC):
                 # Handle dry-run email redirection
                 if self.config.dry_run and self.config.dry_run_email:
                     # Redirect to dry-run email address
-                    recipients = [self.config.dry_run_email]
+                    recipients = self.config.dry_run_email
                     cc_recipients = []
                     
                     # Modify subject to show original recipients
                     subject = f"[DRY-RUN] {base_subject} (Original: {', '.join(original_recipients)})"
                     
-                    self.logger.info(f"[DRY-RUN-EMAIL] Redirecting to: {self.config.dry_run_email}")
+                    self.logger.info(f"[DRY-RUN-EMAIL] Redirecting to: {', '.join(self.config.dry_run_email)}")
                     self.logger.info(f"[DRY-RUN-EMAIL] Original recipients: {', '.join(original_recipients)}")
                     if original_cc_recipients:
                         self.logger.info(f"[DRY-RUN-EMAIL] Original CC: {', '.join(original_cc_recipients)}")
