@@ -158,7 +158,7 @@ class AlertConfig:
             # Tracking - if None or empty, never resend (track "forever")
             reminder_frequency_days=config('REMINDER_FREQUENCY_DAYS', default=None, cast=lambda x: float(x) if x and x.strip() else None),
             sent_events_file=data_dir / config('SENT_EVENTS_FILE', default='sent_alerts.json'),
-            resend_events_on=config('RESEND_EVENTS_ON', default=False, cast=bool)
+            resend_events_on=config('RESEND_EVENTS_ON', default=False, cast=bool),
 
             # Logging
             log_file=logs_dir / config('LOG_FILE', default='alerts.log'),
