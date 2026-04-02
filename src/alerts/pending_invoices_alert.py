@@ -274,7 +274,8 @@ class PendingInvoicesAlert(BaseAlert):
                 )
 
             # CC recipients: fixed internal list from config
-            cc_recipients = self.config.internal_recipients.copy()
+            routing = self.config.email_routing.get('prominencemaritime.com', {})
+            cc_recipients = routing.get('cc', []) + self.config.internal_recipients
 
             # URL
             dept_df = dept_df.copy()
