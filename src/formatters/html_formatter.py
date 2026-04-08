@@ -416,6 +416,7 @@ class HTMLFormatter:
 """
             _display_name_overrides = {
                 'amount_usd': 'USD',
+                'invoice_created_at_ts': 'Created At'
             }
 
             # Add column headers (only for display columns)

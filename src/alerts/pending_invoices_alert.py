@@ -54,6 +54,7 @@ class PendingInvoicesAlert(BaseAlert):
                 - department: str
                 - vendor: str
                 - invoice_no: int
+                - invoice_created_at_ts: datetime
                 - invoice_date: datetime (timezone-naive or aware, depending on DB)
                 - invoice_due_date: datetime
                 - amount_usd: float
@@ -119,6 +120,7 @@ class PendingInvoicesAlert(BaseAlert):
                     department,
                     vendor,
                     invoice_no,
+                    invoice_created_at_ts,
                     invoice_date,
                     invoice_due_date,
                     amount_usd,
@@ -135,10 +137,17 @@ class PendingInvoicesAlert(BaseAlert):
             return df
 
         # Timezone awareness
+        df['invoice_created_at_ts'] = pd.to_datetime(df['invoice_created_at_ts'])
         df['invoice_date'] = pd.to_datetime(df['invoice_date'])
         df['invoice_due_date'] = pd.to_datetime(df['invoice_due_date'])
 
         # If the datetime is timezone-naive, localise it to UTC first, then convert to timezone specified in .env. I am assuming all times appearing are UTC, and then converting to TIMEZONE='Europe/Athens' will automatically be correct during Winter (UTC+2) and Summer (UTC+3).
+
+        if df['invoice_created_at_ts'].dt.tz is None:
+            df['invoice_created_at_ts'] = df['invoice_created_at_ts'].dt.tz_localize('UTC').dt.tz_convert(self.config.timezone)
+        else:
+            # If already timezone-aware, convert to timezone specified in .env
+            df['invoice_created_at_ts'] = df['invoice_created_at_ts'].dt.tz_convert(self.config.timezone)
 
         if df['invoice_date'].dt.tz is None:
             df['invoice_date'] = df['invoice_date'].dt.tz_localize('UTC').dt.tz_convert(self.config.timezone)
@@ -163,6 +172,7 @@ class PendingInvoicesAlert(BaseAlert):
 
         self.logger.info(f"Filtered to {len(df_filtered)} entr{'y' if len(df_filtered)==1 else 'ies'}")
 
+        df_filtered['invoice_created_at_ts'] = df_filtered['invoice_created_at_ts'].dt.strftime('%Y-%m-%d')
         df_filtered['invoice_date'] = df_filtered['invoice_date'].dt.strftime('%Y-%m-%d')
         df_filtered['invoice_due_date'] = df_filtered['invoice_due_date'].dt.strftime('%Y-%m-%d')
         return df_filtered
@@ -217,6 +227,7 @@ class PendingInvoicesAlert(BaseAlert):
                     department,
                     vendor,
                     invoice_no,
+                    invoice_created_at_ts,
                     invoice_date,
                     invoice_due_date,
                     amount_usd,
@@ -292,6 +303,7 @@ class PendingInvoicesAlert(BaseAlert):
                 'vendor',
                 'invoice_no',
                 'invoice_date',
+                'invoice_created_at_ts',
                 'invoice_due_date',
                 'amount_usd'
             ]
@@ -376,6 +388,7 @@ class PendingInvoicesAlert(BaseAlert):
             'department',
             'vendor',
             'invoice_no',
+            'invoice_created_at_ts',
             'invoice_date',
             'invoice_due_date',
             'amount_usd',
