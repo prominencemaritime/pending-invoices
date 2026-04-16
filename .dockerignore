@@ -64,3 +64,6 @@ data/*.csv
 
 
 secrets.env
+
+
+logs/health_status.txt

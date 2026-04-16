@@ -46,8 +46,8 @@ USER appuser
 # Run with scheduling enabled by default using new main.py entry point
 CMD ["python", "-m", "src.main"]
 
-# For daily scheduled tasks (SCHEDULE_TIMES=12:00,18:00)
-HEALTHCHECK --interval=5m --timeout=10s --start-period=2m --retries=2 \
+# For weekly scheduled tasks
+HEALTHCHECK --interval=1h --timeout=10s --start-period=5m --retries=3 \
   CMD python3 /app/scripts/healthcheck.py
 
 # For frequent tasks (SCHEDULE_FREQUENCY_HOURS=1)

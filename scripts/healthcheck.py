@@ -41,6 +41,9 @@ def main():
 
     # Validate file structure first
     try:
+        if not health_file.exists():
+            print("Health file not yet created - container is starting up or awaiting first scheduled run")
+            sys.exit(0)
         validate_health_file_structure(health_file)
     except Exception as e:
         print(f"Health file validation failed: {e}", file=sys.stderr)
