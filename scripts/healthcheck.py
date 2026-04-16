@@ -257,7 +257,7 @@ def calculate_max_age() -> float:
             return calculate_max_age_from_times(schedule_times)
         except Exception as e:
             print(f"Error calculating age from SCHEDULE_TIMES: {e}", file=sys.stderr)
-            return 70  # Default fallback
+            return 7 * 24 * 60 + 10  # 1 week + 10 min buffer
 
     # Mode 3: No schedule defined (default to hourly + buffer)
     else:
@@ -266,26 +266,6 @@ def calculate_max_age() -> float:
 
 
 def calculate_max_age_from_times(schedule_times: str) -> float:
-    """
-    Calculate maximum age based on SCHEDULE_TIMES.
-
-    For times like "12:00,18:00", the health file should be updated within
-    10 minutes after the most recent scheduled time.
-
-    Uses the effective timezone (SCHEDULE_TIMES_TIMEZONE or TIMEZONE) for
-    determining "now" and calculating schedule times.
-
-    Args:
-        schedule_times: Comma-separated list of times (HH:MM format)
-
-    Returns:
-        Maximum age in minutes (time since most recent scheduled time + 10 min buffer)
-
-    Note:
-        This function uses timezone-aware datetime calculations to ensure
-        correct behavior across different timezones.
-    """
-    # Get timezone-aware "now"
     tz_name = get_effective_timezone()
     try:
         now = datetime.now(tz=ZoneInfo(tz_name))
@@ -293,45 +273,61 @@ def calculate_max_age_from_times(schedule_times: str) -> float:
         print(f"Invalid timezone '{tz_name}': {e}, falling back to UTC", file=sys.stderr)
         now = datetime.now(tz=ZoneInfo('UTC'))
 
-    # Parse all scheduled times
+    # Parse scheduled times
     time_list = [t.strip() for t in schedule_times.split(',')]
-    scheduled_datetimes = []
-
+    parsed_times = []
     for time_str in time_list:
         try:
             hour, minute = map(int, time_str.split(':'))
-
-            # Create timezone-aware datetime for today
-            scheduled_today = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            scheduled_datetimes.append(scheduled_today)
-
-            # Also consider yesterday's schedule
-            scheduled_yesterday = scheduled_today - timedelta(days=1)
-            scheduled_datetimes.append(scheduled_yesterday)
-
+            parsed_times.append((hour, minute))
         except (ValueError, IndexError) as e:
             print(f"Invalid time format '{time_str}': {e}", file=sys.stderr)
-            continue
 
-    if not scheduled_datetimes:
+    if not parsed_times:
         print("No valid times found in SCHEDULE_TIMES", file=sys.stderr)
         return 70
 
-    # Find the most recent scheduled time that has passed
-    past_times = [dt for dt in scheduled_datetimes if dt <= now]
+    # Parse scheduled days (ISO weekdays). If unset, assume every day (1-7).
+    schedule_days_raw = os.getenv('SCHEDULE_DAYS', '').strip()
+    if schedule_days_raw:
+        try:
+            weekdays = [int(d.strip()) for d in schedule_days_raw.split(',')]
+        except ValueError:
+            print(f"Invalid SCHEDULE_DAYS value: '{schedule_days_raw}', assuming daily", file=sys.stderr)
+            weekdays = list(range(1, 8))
+    else:
+        weekdays = list(range(1, 8))
 
+    # Build all candidate datetimes (most recent occurrence of each day+time pair)
+    candidates = []
+    for iso_weekday in weekdays:
+        for hour, minute in parsed_times:
+            candidate = last_occurrence_of_weekday(now, iso_weekday, hour, minute)
+            candidates.append(candidate)
+
+    past_times = [dt for dt in candidates if dt <= now]
     if not past_times:
-        # No scheduled time has passed yet today - use most recent from yesterday
-        past_times = sorted(scheduled_datetimes)
+        print("No past scheduled time found, using 7-day fallback", file=sys.stderr)
+        return 7 * 24 * 60 + 10
 
     most_recent = max(past_times)
-
-    # Calculate minutes since most recent scheduled time
     minutes_since = (now - most_recent).total_seconds() / 60
-
-    # Allow the time since last schedule + 10 minute buffer
     return minutes_since + 10
+
+
+def last_occurrence_of_weekday(now: datetime, iso_weekday: int, hour: int, minute: int) -> datetime:
+    """
+    Return the most recent past datetime matching the given ISO weekday and time.
+    Looks back up to 7 days from now (inclusive of today).
+    """
+    days_back = (now.isoweekday() - iso_weekday) % 7
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0) - timedelta(days=days_back)
+    if candidate > now:
+        candidate -= timedelta(weeks=1)
+    return candidate
 
 
 if __name__ == "__main__":
     main()
+
+

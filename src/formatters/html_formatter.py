@@ -395,6 +395,7 @@ class HTMLFormatter:
                     f"&filters%5B1%5D%5Bname%5D=department_id"
                     f"&filters%5B1%5D%5Boperation%5D=oneOf"
                     f"&filters%5B1%5D%5Bvalue%5D%5B0%5D={department_id}"
+                    "&filters%5B2%5D%5Bname%5D=due_date&filters%5B2%5D%5Boperation%5D=beforeDaysFromToday&filters%5B2%5D%5Bvalue%5D=30&sorting%5Bdue_date%5D=asc"
                 )
                 html += f"""
                     <p style="font-size: 13px; margin-top: 10px;">
